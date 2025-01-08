@@ -1,5 +1,6 @@
-INCS=-I/usr/local/include
-LIBS=-L/usr/local/lib -lgd -lm
+GD=/opt/homebrew/Cellar/gd/2.3.3_6
+INCS=-I/usr/local/include -I${GD}/include
+LIBS=-L/usr/local/lib -lgd -lm -L${GD}/lib
 CFLAGS=-g -Wall ${INCS}
 LDFLAGS=-g
 OBJS=\

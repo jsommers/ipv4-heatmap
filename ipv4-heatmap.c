@@ -60,6 +60,7 @@ int legend_prefixes_flag = 0;
 int reverse_flag = 0;		/* reverse background/font colors */
 int morton_flag = 0;
 int accumulate_counts = 0;	/* for when the input data contains a value */
+int prefix_input = 0;
 struct {
 	unsigned int secs;
 	double input_time;
@@ -155,6 +156,100 @@ get_pixel_value(unsigned int x, unsigned int y)
     if (k == NUM_DATA_COLORS)	/* not found */
 	k = 0;
     return k;
+}
+
+void paint_prefix(void) {
+    char buf[512];
+    unsigned int line = 1;
+    while (fgets(buf, 512, stdin)) {
+	unsigned int x;
+	unsigned int y;
+	int color = -1;
+	int k;
+	char *strtok_arg = buf;
+	char *t;
+
+	/*
+	 * In animated gif mode the first field is a timestamp
+	 */
+	if (anim_gif.secs) {
+	    char *e;
+	    t = strtok(strtok_arg, whitespace);
+	    strtok_arg = NULL;
+	    if (NULL == t)
+		continue;
+	    anim_gif.input_time = strtod(t, &e);
+	    if (e == t)
+		errx(1, "bad input parsing time on line %d: %s", line, t);
+	}
+
+	/*
+	 * next field is an IP prefix
+	 */
+	t = strtok(strtok_arg, whitespace);
+	strtok_arg = NULL;
+	if (NULL == t)
+	    continue;
+
+	unsigned int start = 0, end = 0;
+        int slash = 0;
+	if (!cidr_parse(t, &start, &end, &slash)) {
+	    errx(1, "bad input parsing IP on line %d: %s", line, t);
+	}
+
+        unsigned int i = start;
+        if (0 == xy_from_ip(i, &x, &y))
+            continue;
+
+	/*
+	* next field is an optional value, which might also be
+	* logarithmically scaled by us.  If no value is given, then find the
+	* existing value at that point and increment by one.
+	*/
+	t = strtok(NULL, whitespace);
+	if (NULL != t) {
+		k = atoi(t);
+		if (accumulate_counts)
+			k += get_pixel_value(x, y);
+		if (0.0 != log_A) {
+			/*
+			* apply logarithmic stretching
+			*/
+			k = (int) ((log_C * log((double) k / log_A)) + 0.5);
+		}
+	} else {
+		k = get_pixel_value(x, y);
+		k++;
+	}
+	if (k < 0)
+		k = 0;
+	if (k >= NUM_DATA_COLORS)
+		k = NUM_DATA_COLORS - 1;
+	color = colors[k];
+
+	for (i = start; i <= end; i++) {
+		if (0 == xy_from_ip(i, &x, &y))
+			continue;
+		if (debug)
+			fprintf(stderr, "%s => %u => (%d,%d)\n", t, i, x, y);
+
+		/*
+		* Now that we're doing parsing the entire input line, we can check if
+		* an animated gif file needs to be written out.  This is done here because
+			* saving the gif image can call annotation routines that also use strtok().
+		*/
+		if (anim_gif.secs) {
+			if ((time_t) anim_gif.input_time > anim_gif.next_output) {
+			savegif(0);
+			anim_gif.next_output = (time_t) anim_gif.input_time + anim_gif.secs;
+			}
+		}
+
+		gdImageSetPixel(image, x, y, color);
+	}
+
+	line++;
+    }
 }
 
 void
@@ -364,7 +459,7 @@ int
 main(int argc, char *argv[])
 {
     int ch;
-    while ((ch = getopt(argc, argv, "A:B:a:Cc:df:g:hk:mo:prs:t:u:y:z:")) != -1) {
+    while ((ch = getopt(argc, argv, "A:B:a:Cc:df:g:hk:mo:Pprs:t:u:y:z:")) != -1) {
 	switch (ch) {
 	case 'A':
 	    log_A = atof(optarg);
@@ -409,6 +504,9 @@ main(int argc, char *argv[])
 	case 't':
 	    title = strdup(optarg);
 	    break;
+        case 'P':
+            prefix_input = 1;
+            break;
 	case 'p':
 	    legend_prefixes_flag = 1;
 	    break;
@@ -433,7 +531,11 @@ main(int argc, char *argv[])
     argv += optind;
 
     initialize();
-    paint();
+    if (prefix_input) {
+        paint_prefix();
+    } else  {
+        paint();
+    }
     if (anim_gif.secs) {
 	savegif(1);
     } else {
